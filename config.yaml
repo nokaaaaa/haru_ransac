@@ -1,0 +1,13 @@
+ransac:
+  ros__parameters:
+    max_loop : 100
+    threshold : 0.02
+    min_samples : 10
+    detect_line : 5
+    min_theta : -90.0
+    max_theta : 90.0
+    sampling_rate : 1
+    hanten : true
+    tf_y : 0.404
+    visu_line : false
+
