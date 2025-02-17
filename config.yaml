@@ -8,6 +8,6 @@ ransac:
     max_theta : 90.0
     sampling_rate : 1
     hanten : true
-    tf_y : 0.404
+    tf_y : 0.237673
     visu_line : false
 
