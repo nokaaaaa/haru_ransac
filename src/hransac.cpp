@@ -4,6 +4,7 @@
 #include <visualization_msgs/msg/marker_array.hpp>
 #include <geometry_msgs/msg/point.hpp>
 #include <geometry_msgs/msg/pose2_d.hpp>
+#include <std_msgs/msg/int32.hpp>
 #include <vector>
 #include <random>
 #include <cmath>
@@ -93,19 +94,24 @@ public:
     RANSACNode() : Node("hransac") {
         subscription_ = this->create_subscription<sensor_msgs::msg::LaserScan>(
             "/scan_fullframe", 10, bind(&RANSACNode::lidar_callback, this, _1));
+        state_subscription_ = this->create_subscription<std_msgs::msg::Int32>(
+            "/state", 10,
+            bind(&RANSACNode::state_callback, this, std::placeholders::_1));
+
         line_publisher_ = this->create_publisher<visualization_msgs::msg::MarkerArray>("/line_markers", 10);
         pose_publisher_ = this->create_publisher<geometry_msgs::msg::Pose2D>("/pose", 10);
+
 
         this->declare_parameter<int>("max_loop", 100);
         this->declare_parameter<double>("threshold", 0.05);
         this->declare_parameter<int>("min_samples", 10);
-        this->declare_parameter<int>("detect_line", 3);
+        this->declare_parameter<int>("detect_line", 5);
         this->declare_parameter<double>("min_theta", -90.0);
         this->declare_parameter<double>("max_theta", 90.0);
         this->declare_parameter<int>("sampling_rate", 2);
         this->declare_parameter<bool>("hanten", true);
-        this->declare_parameter<double>("tf_y", 0.404);
-        this->declare_parameter<bool>("visu_line", true);
+        this->declare_parameter<double>("tf_y", 0.237673);
+        this->declare_parameter<bool>("visu_line", false);
 
         max_loop_ = this->get_parameter("max_loop").as_int();
         threshold_  = this->get_parameter("threshold").as_double();
@@ -123,21 +129,9 @@ private:
 
     
     rclcpp::Subscription<sensor_msgs::msg::LaserScan>::SharedPtr subscription_;
+    rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr state_subscription_;
     rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr line_publisher_;
     rclcpp::Publisher<geometry_msgs::msg::Pose2D>::SharedPtr pose_publisher_;
-
-
-
-
-
-
-
-
-
-
-
-
-
     
     int max_loop_, min_samples_, detect_line_, sampling_rate_;
     double threshold_, min_theta_, max_theta_;
@@ -156,9 +150,9 @@ private:
 
         //最初の経路  angleが30度以下の点群を取る 3本検出して、うち2本を使って自己位置決定
 
-        //黒板消し→ボールの経路 xが0.5以下の点を選んで、5辺読んで3本選んで自己位置決定
+        //黒板消し→ボールの経路 xが0.5以下の点を選んで、5辺読んで2本選んで自己位置決定
 
-        //細道に侵入する経路 and 射出時のyaw角参照　angleが-10度以上の点を選んで、2辺だけ読むようにする
+        //細道に侵入する経路 and 射出時のyaw角参照　angleが-10度以上の点を選んで、3辺読んで2本選んで自己位置決定
 
         //セグフォに気をつけよう×n
 
@@ -170,16 +164,25 @@ private:
                 angle >= deg_to_rad(min_theta_) && angle <= deg_to_rad(max_theta_)) {
                 double x = range * cos(angle);
                 double y = range * sin(angle);
-                //if (state==0 &&angle>deg_to_rad(-30)) point_cloud.emplace_back(vector<double>{x, y});
-                //一旦かりでstate=0のときy座標でフィルタリング
-                if (state==0 &&y>-0.3) point_cloud.emplace_back(vector<double>{x, y});
-                if (state==1 &&x<0.6) point_cloud.emplace_back(vector<double>{x, y});
-                if (state==2 &&angle>deg_to_rad(-10)) point_cloud.emplace_back(vector<double>{x, y});
+                if (state==0 &&angle<deg_to_rad(30)) 
+                {
+                    detect_line_ = 3;
+                    point_cloud.emplace_back(vector<double>{x, y});
+                }
+                if (state==1 &&x<0.6) 
+                {
+                    detect_line_ = 5;
+                    point_cloud.emplace_back(vector<double>{x, y});
+                }
+                if (state>=2 &&angle>deg_to_rad(-10)) 
+                {
+                    detect_line_ = 3;
+                    point_cloud.emplace_back(vector<double>{x, y});
+                }
                 
             }
 
         }
-  //       cout<<rad_to_deg(msg->angle_min)<<endl;
 
         vector<vector<double>> params;
         vector<vector<vector<double>>> inlier_points_list;
@@ -244,74 +247,79 @@ private:
                 if(abs(a[i]/b[i])>abs(a[max_index]/b[max_index])) max_index = i;
             }
 
-            //max_indexを除き、ローカル座標のy軸との交点が最大の直線を選ぶ
+            //max_indexを除き、ローカル座標のy軸との交点が最小の直線を選ぶ
 
-            int max = 0;
-            //y座標は-c/bより不等号の逆転が必要
-            /*
-            for(int i=0;i<line_num;++i)
-            {
-                if(i==max_index) continue;
-                if(c[i]/b[i]<c[max]/b[max]) max = i;
+            int min_index = -1;
+            double min_value = std::numeric_limits<double>::max();
+
+            for (int i = 0; i < line_num; ++i) {
+                if (i == max_index) continue;
+                double value = -c[i] / b[i];
+                if (value < min_value) {
+                    min_value = value;
+                    min_index = i;
+                }
             }
-            */
-           if(max_index==0) max = 1;
-              else max = 0;
-
-
-            pose_x = distance(a[max],b[max],c[max])-0.5111233;//左の壁からの距離を足す
-            pose_y = distance(a[max_index],b[max_index],c[max_index])-0.18157;//手前の壁からの距離を足す
-            pose_theta = normalize_angle(M_PI/2 - atan2(a[max_index],b[max_index]));//i=1のかべ読むほうが精度高くね？
+            
+            pose_theta = normalize_angle(atan(a[min_index]/b[min_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[min_index],b[min_index],c[min_index])-0.36252;//左の壁からの距離を足す
+            pose_y = tf_y * cos(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-0.45911;//手前の壁からの距離を足す
 
         }
 
-        /*
+        
         //黒板消し→ボールのときの自己位置
         else if(state==1)  
         {        
-            //std(b/a)が最大のものがy座標を決める横の直線になる
+            // 一番傾きの絶対値が大きい直線を探す
             int max_index = 0;
+            for (int i = 0; i < line_num; ++i) {
+                if (abs(a[i] / b[i]) > abs(a[max_index] / b[max_index])) max_index = i;
+            }
 
-            for (int i = 0; i < length; ++i) {
-                if (a[i] != 0) { //ここちょっと怖い a=0だったらmax_indexにしてもいいかも
-                    double value = abs(b[i] / a[i]);
-                    if (value > max_value) {
-                        max_index = i;
-                    }
+            // max_indexを除き、ローカル座標のy軸との交点の座標が最大の直線を選ぶ(最終的に右の壁に近づくので)
+            int max = -1;
+            double max_value = std::numeric_limits<double>::min();
+
+            for (int i = 0; i < line_num; ++i) {
+                if (i == max_index) continue; // max_indexを除く
+                double value = -c[i] / b[i];
+                if (value > max_value) {
+                    max_value = value;
+                    max = i;
                 }
             }
 
-            //max_indexを除き、ローカル座標のy軸との交点が最小のものと最大の直線を選ぶ
-            int max = 0;
-            int min = 0;
-            //y座標は-c/bより不等号の逆転が必要
-
-            for(int i=0;i<length;++i)
-            {
-                if(i==max_index) continue;
-                if(c[i]/b[i]<c[max]/b[max]) max = i;
-                if(c[i]/b[i]>c[min]/b[min]) min = i;
-            }
-            
-            pose_x = 3+(distance(a[min],b[min],c[min])-distance(a[max],b[max],c[max]))/2;//左の壁からの距離を足す
-            pose_y = 0.5+distance(a[max_index],b[max_index],c[max_index]);//手前の壁からの距離を足す
-            pose_theta = normalize_angle(atan2(a[min],b[min])-M_PI/2);
+            pose_theta = normalize_angle(atan(a[max] / b[max]));
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[max], b[max], c[max])+3.0624; // 右の壁からの距離を引く
+            pose_y = tf_y * cos(pose_theta) + distance(a[max_index], b[max_index], c[max_index])+5.04089; // 手前の壁からの距離を足す
 
         }
-        */
+    
         //細道に侵入するときの自己位置
         else{
-            //i=0の直線が手前の直線(スタート時にある直線)
-            //i=1の直線が縦の直線
-            if(abs(a[1]*b[0])>abs(a[0]*b[1]))
-            {
-                swap(a[0],a[1]);
-                swap(b[0],b[1]);
-                swap(c[0],c[1]);
+            // 一番傾きの絶対値が大きい直線を探す
+            int max_index = 0;
+            for (int i = 0; i < line_num; ++i) {
+                if (abs(a[i] / b[i]) > abs(a[max_index] / b[max_index])) max_index = i;
             }
-            pose_x = 3.06248-distance(a[1],b[1],c[1]);//左の壁からの距離を足す
-            pose_y = 2.77243+distance(a[0],b[0],c[0]);//手前の壁からの距離を足す
-            pose_theta = normalize_angle(atan2(a[0],b[0])-M_PI/2);
+
+            // max_indexを除き、ローカル座標のy軸との交点の座標が最大の直線を選ぶ
+            int max = -1;
+            double max_value = std::numeric_limits<double>::min();
+
+            for (int i = 0; i < line_num; ++i) {
+                if (i == max_index) continue; // max_indexを除く
+                double value = -c[i] / b[i];
+                if (value > max_value) {
+                    max_value = value;
+                    max = i;
+                }
+            }
+
+            pose_theta = normalize_angle(atan(a[max] / b[max]));
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[max], b[max], c[max])+3.062476; // 右の壁からの距離を引く
+            pose_y = tf_y * cos(pose_theta) + distance(a[max_index], b[max_index], c[max_index])+2.540887; // 手前の壁からの距離を足す
         }
 
         geometry_msgs::msg::Pose2D pose_msg;
@@ -319,7 +327,13 @@ private:
         pose_msg.y = pose_y;
         pose_msg.theta = pose_theta;
         pose_publisher_->publish(pose_msg);
+
+        cout<<"state"   <<state<<endl;
       
+    }
+
+    void state_callback(const std_msgs::msg::Int32::SharedPtr msg) {
+        state = msg->data;
     }
     
     //原点と直線の距離
