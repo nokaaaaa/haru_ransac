@@ -109,9 +109,10 @@ public:
         this->declare_parameter<double>("min_theta", -90.0);
         this->declare_parameter<double>("max_theta", 90.0);
         this->declare_parameter<int>("sampling_rate", 2);
-        this->declare_parameter<bool>("hanten", true);
         this->declare_parameter<double>("tf_y", 0.237673);
-        this->declare_parameter<bool>("visu_line", false);
+        this->declare_parameter<bool>("visu_line", true);
+        this->declare_parameter("field_color", "red");
+
 
         max_loop_ = this->get_parameter("max_loop").as_int();
         threshold_  = this->get_parameter("threshold").as_double();
@@ -120,9 +121,16 @@ public:
         min_theta_ = this->get_parameter("min_theta").as_double();
         max_theta_  = this->get_parameter("max_theta").as_double();
         sampling_rate_ = this->get_parameter("sampling_rate").as_int();
-        hanten  = this->get_parameter("hanten").as_bool();
         tf_y  = this->get_parameter("tf_y").as_double();
         visu_line_  = this->get_parameter("visu_line").as_bool();
+        field_color_ = this->get_parameter("field_color").as_string();
+
+        if(field_color_ == "red") court = true;
+        else court = false;
+        
+       // RCLCPP_INFO(this->get_logger(), "field_color: %s", field_color_.c_str());
+
+        cout<<"sampling_rate"   <<sampling_rate_<<endl;
     }
 
 private:
@@ -137,7 +145,8 @@ private:
     double threshold_, min_theta_, max_theta_;
     double wid , hei ;
     double tf_y;
-    bool hanten,visu_line_;
+    bool visu_line_,court;
+    string field_color_;
 
     size_t previous_marker_count_ = 0;
     int state = 0;
@@ -154,6 +163,7 @@ private:
 
         //細道に侵入する経路 and 射出時のyaw角参照　angleが-10度以上の点を選んで、3辺読んで2本選んで自己位置決定
 
+        //↑これはあくまでLiDARが反転していない青コートを想定している
         //セグフォに気をつけよう×n
 
         for (size_t i = 0; i < msg->ranges.size(); i += sampling_rate_) {
@@ -164,20 +174,42 @@ private:
                 angle >= deg_to_rad(min_theta_) && angle <= deg_to_rad(max_theta_)) {
                 double x = range * cos(angle);
                 double y = range * sin(angle);
-                if (state==0 &&angle<deg_to_rad(30)) 
+
+                if(court)
                 {
-                    detect_line_ = 3;
-                    point_cloud.emplace_back(vector<double>{x, y});
+                    if (state==0 &&angle<deg_to_rad(30)) 
+                    {
+                        detect_line_ = 3;
+                        point_cloud.emplace_back(vector<double>{x, y});
+                    }
+                    if (state==1 &&x<0.6) 
+                    {
+                        detect_line_ = 5;
+                        point_cloud.emplace_back(vector<double>{x, y});
+                    }
+                    if (state>=2 &&angle>deg_to_rad(-10)) 
+                    {
+                        detect_line_ = 3;
+                        point_cloud.emplace_back(vector<double>{x, y});
+                    }
                 }
-                if (state==1 &&x<0.6) 
-                {
-                    detect_line_ = 5;
-                    point_cloud.emplace_back(vector<double>{x, y});
-                }
-                if (state>=2 &&angle>deg_to_rad(-10)) 
-                {
-                    detect_line_ = 3;
-                    point_cloud.emplace_back(vector<double>{x, y});
+                else
+                {                
+                    if (state==0 &&angle>deg_to_rad(-30)) 
+                    {
+                        detect_line_ = 3;
+                        point_cloud.emplace_back(vector<double>{x, y});
+                    }
+                    if (state==1 &&x<0.6) 
+                    {
+                        detect_line_ = 5;
+                        point_cloud.emplace_back(vector<double>{x, y});
+                    }
+                    if (state>=2 &&angle<deg_to_rad(10)) 
+                    {
+                        detect_line_ = 3;
+                        point_cloud.emplace_back(vector<double>{x, y});
+                    }
                 }
                 
             }
@@ -212,9 +244,7 @@ private:
             }
         }
        
-        line_visualizer(params, inlier_points_list);
-
-        double pose_x , pose_y , pose_theta ;
+        if(visu_line_) line_visualizer(params, inlier_points_list);
 
         //検出した直線の本数
         int line_num = params.size();
@@ -236,90 +266,76 @@ private:
             }
         }
         
-        //最初の経路における自己位置
-        //検出舌本数が2本でも3本でも同じ壁を読めるようにする
-        if(state==0)
+         //一番傾きの絶対値が大きい直線を探す
+        int index = 0;
+        for(int i=0;i<line_num;++i)
         {
-            //一番傾きの絶対値が大きい直線を探す
-            int max_index = 0;
-            for(int i=0;i<line_num;++i)
-            {
-                if(abs(a[i]/b[i])>abs(a[max_index]/b[max_index])) max_index = i;
+            if(abs(a[i]/b[i])>abs(a[index]/b[index])) index = i;
+        }
+
+        //indexを除き、ローカル座標のy軸との交点が最大の直線を選ぶ
+        int max_index = -1;
+        double max_value = std::numeric_limits<double>::min();
+
+        for (int i = 0; i < line_num; ++i) {
+            if (i == index) continue; 
+            double hvalue = -c[i] / b[i];
+            if (hvalue > max_value) {
+                max_value = hvalue;
+                max_index = i;
             }
+        }
 
-            //max_indexを除き、ローカル座標のy軸との交点が最小の直線を選ぶ
-
-            int min_index = -1;
+        //indexを除き、ローカル座標のy軸との交点が最小の直線を選ぶ
+        int min_index = -1;
             double min_value = std::numeric_limits<double>::max();
 
             for (int i = 0; i < line_num; ++i) {
-                if (i == max_index) continue;
-                double value = -c[i] / b[i];
-                if (value < min_value) {
-                    min_value = value;
+                if (i == index) continue;
+                double lvalue = -c[i] / b[i];
+                if (lvalue < min_value) {
+                    min_value = lvalue;
                     min_index = i;
                 }
             }
-            
-            pose_theta = normalize_angle(atan(a[min_index]/b[min_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[min_index],b[min_index],c[min_index])-0.36252;//左の壁からの距離を足す
-            pose_y = tf_y * cos(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-0.45911;//手前の壁からの距離を足す
 
+        double pose_x , pose_y , pose_theta ;
+
+        if(state==0 && court == true)
+        {
+            pose_theta = normalize_angle(-atan(a[min_index]/b[min_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+0.30252;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])-0.44913;
         }
-
-        
-        //黒板消し→ボールのときの自己位置
-        else if(state==1)  
-        {        
-            // 一番傾きの絶対値が大きい直線を探す
-            int max_index = 0;
-            for (int i = 0; i < line_num; ++i) {
-                if (abs(a[i] / b[i]) > abs(a[max_index] / b[max_index])) max_index = i;
-            }
-
-            // max_indexを除き、ローカル座標のy軸との交点の座標が最大の直線を選ぶ(最終的に右の壁に近づくので)
-            int max = -1;
-            double max_value = std::numeric_limits<double>::min();
-
-            for (int i = 0; i < line_num; ++i) {
-                if (i == max_index) continue; // max_indexを除く
-                double value = -c[i] / b[i];
-                if (value > max_value) {
-                    max_value = value;
-                    max = i;
-                }
-            }
-
-            pose_theta = normalize_angle(atan(a[max] / b[max]));
-            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[max], b[max], c[max])+3.0624; // 右の壁からの距離を引く
-            pose_y = tf_y * cos(pose_theta) + distance(a[max_index], b[max_index], c[max_index])+5.04089; // 手前の壁からの距離を足す
-
+        if(state==0 && court == false)
+        {
+            pose_theta = normalize_angle(-atan(a[max_index]/b[max_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-0.36252;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])-0.459113;
         }
-    
-        //細道に侵入するときの自己位置
-        else{
-            // 一番傾きの絶対値が大きい直線を探す
-            int max_index = 0;
-            for (int i = 0; i < line_num; ++i) {
-                if (abs(a[i] / b[i]) > abs(a[max_index] / b[max_index])) max_index = i;
-            }
-
-            // max_indexを除き、ローカル座標のy軸との交点の座標が最大の直線を選ぶ
-            int max = -1;
-            double max_value = std::numeric_limits<double>::min();
-
-            for (int i = 0; i < line_num; ++i) {
-                if (i == max_index) continue; // max_indexを除く
-                double value = -c[i] / b[i];
-                if (value > max_value) {
-                    max_value = value;
-                    max = i;
-                }
-            }
-
-            pose_theta = normalize_angle(atan(a[max] / b[max]));
-            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[max], b[max], c[max])+3.062476; // 右の壁からの距離を引く
-            pose_y = tf_y * cos(pose_theta) + distance(a[max_index], b[max_index], c[max_index])+2.540887; // 手前の壁からの距離を足す
+        if(state==1 && court == true)
+        { 
+            pose_theta = normalize_angle(-atan(a[max_index]/b[max_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-3.1224;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+5.05089;
+        }
+        if(state==1 && court == false)
+        {
+            pose_theta = normalize_angle(-atan(a[min_index]/b[min_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+3.0624;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+5.04089;
+        }
+        if(state>=2 && court == true)
+        {
+            pose_theta = normalize_angle(-atan(a[max_index]/b[max_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-3.12247;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+2.5509;
+        }
+        if(state>=2 && court == false)
+        {
+            pose_theta = normalize_angle(-atan(a[min_index]/b[min_index]));
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+3.06247;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+2.54089;
         }
 
         geometry_msgs::msg::Pose2D pose_msg;
@@ -327,8 +343,6 @@ private:
         pose_msg.y = pose_y;
         pose_msg.theta = pose_theta;
         pose_publisher_->publish(pose_msg);
-
-        cout<<"state"   <<state<<endl;
       
     }
 
