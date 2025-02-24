@@ -15,6 +15,8 @@
 using namespace std;
 using namespace std::placeholders;
 
+//でかい変更 角の隅を(0,0)にして,フィールドの寸法から自己位置を決定する 目を覚まさせてくれた川合さんに感謝
+
 class RANSAC_Euclid {
 public:
     RANSAC_Euclid(int max_loop, double threshold, int min_samples)
@@ -304,38 +306,38 @@ private:
         if(state==0 && court == true)
         {
             pose_theta = normalize_angle(-atan(a[min_index]/b[min_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+0.30252;
-            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])-0.44913;
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index]);
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index]);
         }
         if(state==0 && court == false)
         {
             pose_theta = normalize_angle(-atan(a[max_index]/b[max_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-0.36252;
-            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])-0.459113;
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index]);
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index]);
         }
         if(state==1 && court == true)
         { 
             pose_theta = normalize_angle(-atan(a[max_index]/b[max_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-3.1224;
-            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+5.05089;
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-3.424;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+5.5;
         }
         if(state==1 && court == false)
         {
             pose_theta = normalize_angle(-atan(a[min_index]/b[min_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+3.0624;
-            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+5.04089;
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+3.424;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+5.5;
         }
         if(state>=2 && court == true)
         {
             pose_theta = normalize_angle(-atan(a[max_index]/b[max_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-3.12247;
-            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+2.5509;
+            pose_x = (-1) * tf_y * sin(pose_theta) + distance(a[max_index],b[max_index],c[max_index])-3.424;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+2.962;
         }
         if(state>=2 && court == false)
         {
             pose_theta = normalize_angle(-atan(a[min_index]/b[min_index]));
-            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+3.06247;
-            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+2.54089;
+            pose_x = (-1) * tf_y * sin(pose_theta) - distance(a[min_index],b[min_index],c[min_index])+3.424;
+            pose_y = tf_y * cos(pose_theta) + distance(a[index],b[index],c[index])+2.962;
         }
 
         geometry_msgs::msg::Pose2D pose_msg;
